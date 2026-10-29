@@ -40,10 +40,13 @@ jobs:
 
       # O Bling rotaciona o refresh token a cada uso: sem salvar o novo, a proxima execucao falha.
       # GH_PAT_SECRETS = token pessoal (fine-grained) com permissao "Secrets: read and write" neste repo.
+      # if: always() garante que o token novo seja salvo mesmo se a coleta falhar depois da renovacao.
       - name: Atualizar refresh token no secret
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_SECRETS }}
         run: |
+          test -f dados/.bling_token.json || { echo "Token nao foi renovado nesta execucao"; exit 0; }
           python - <<'EOF' > /tmp/refresh.txt
           import json; print(json.load(open("dados/.bling_token.json"))["refresh_token"], end="")
           EOF
@@ -51,9 +54,11 @@ jobs:
           rm -f /tmp/refresh.txt
 
       - name: Gerar diff e indicadores
+        if: success()
         run: python scripts/gerar_diff.py
 
       - name: Verificar demandas
+        if: success()
         run: python scripts/verificar_demandas.py
 
       # 2) Inteligencia: o orquestrador le so o resumo (poucos KB)
