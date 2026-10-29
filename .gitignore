@@ -1,0 +1,10 @@
+# Dados brutos do Bling (grandes e com informacao sensivel): nunca versionar
+dados/bruto/
+# Tokens e segredos
+.env
+dados/.bling_token.json
+*.token
+# Python
+__pycache__/
+*.pyc
+.venv/
