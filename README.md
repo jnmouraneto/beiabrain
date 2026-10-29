@@ -1,4 +1,4 @@
-# beiabrain
+# beiabrain: BeIa, a orquestradora da Be Papel
 
 Orquestrador de agentes de IA (Claude Code) para uma papelaria, alimentado pelo Bling.
 
