@@ -8,3 +8,7 @@ dados/.bling_token.json
 __pycache__/
 *.pyc
 .venv/
+# Coletor (Vercel)
+coletor/node_modules/
+coletor/.vercel/
+coletor/.env*

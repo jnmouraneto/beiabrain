@@ -10,6 +10,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(os.environ.get("BEIA_ROOT", Path(__file__).resolve().parent.parent))
 DADOS = ROOT / "dados"
 BRUTO = DADOS / "bruto"
+# Arquivos publicados pelo coletor da Vercel: dados/entrada/AAAA-MM-DD.json.gz
+ENTRADA = DADOS / "entrada"
 DIARIO = DADOS / "diario"
 DB_PATH = DADOS / "empresa.db"
 DEMANDAS = ROOT / "demandas" / "demandas.json"

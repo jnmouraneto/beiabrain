@@ -1,13 +1,17 @@
 name: Rotina diaria
 
+# A coleta do Bling roda na Vercel (pasta coletor/), que publica dados/entrada/AAAA-MM-DD.json.gz.
+# Este workflow dispara quando esse arquivo chega: gera o diff, verifica as demandas e aciona a BeIa.
 on:
-  schedule:
-    - cron: "0 9 * * *"   # 06:00 em Brasilia (UTC-3)
+  push:
+    branches: [main]
+    paths:
+      - "dados/entrada/**"
   workflow_dispatch:
     inputs:
-      dias_vendas:
-        description: "Janela de vendas em dias (use 90 na carga inicial)"
-        default: "2"
+      data:
+        description: "AAAA-MM-DD (vazio = arquivo mais recente em dados/entrada)"
+        default: ""
 
 permissions:
   contents: write
@@ -19,11 +23,8 @@ concurrency:
 jobs:
   rotina:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
-      BLING_CLIENT_ID: ${{ secrets.BLING_CLIENT_ID }}
-      BLING_CLIENT_SECRET: ${{ secrets.BLING_CLIENT_SECRET }}
-      BLING_REFRESH_TOKEN: ${{ secrets.BLING_REFRESH_TOKEN }}
       TZ: America/Sao_Paulo
     steps:
       - uses: actions/checkout@v4
@@ -32,36 +33,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install requests
+      - name: Definir a data a processar
+        id: data
+        run: |
+          if [ -n "${{ github.event.inputs.data }}" ]; then
+            D="${{ github.event.inputs.data }}"
+          else
+            D="$(ls dados/entrada/*.json.gz | sort | tail -1 | xargs basename | sed 's/.json.gz//')"
+          fi
+          echo "data=$D" >> "$GITHUB_OUTPUT"
+          echo "Processando $D"
 
       # 1) Trabalho braçal, sem IA
-      - name: Puxar dados do Bling
-        run: python scripts/puxar_bling.py --dias "${{ github.event.inputs.dias_vendas || '2' }}"
-
-      # O Bling rotaciona o refresh token a cada uso: sem salvar o novo, a proxima execucao falha.
-      # GH_PAT_SECRETS = token pessoal (fine-grained) com permissao "Secrets: read and write" neste repo.
-      # if: always() garante que o token novo seja salvo mesmo se a coleta falhar depois da renovacao.
-      - name: Atualizar refresh token no secret
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT_SECRETS }}
-        run: |
-          test -f dados/.bling_token.json || { echo "Token nao foi renovado nesta execucao"; exit 0; }
-          python - <<'EOF' > /tmp/refresh.txt
-          import json; print(json.load(open("dados/.bling_token.json"))["refresh_token"], end="")
-          EOF
-          gh secret set BLING_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < /tmp/refresh.txt
-          rm -f /tmp/refresh.txt
-
       - name: Gerar diff e indicadores
-        if: success()
-        run: python scripts/gerar_diff.py
+        run: python scripts/gerar_diff.py --data "${{ steps.data.outputs.data }}"
 
       - name: Verificar demandas
-        if: success()
-        run: python scripts/verificar_demandas.py
+        run: python scripts/verificar_demandas.py --data "${{ steps.data.outputs.data }}"
 
-      # 2) Inteligencia: o orquestrador le so o resumo (poucos KB)
+      # 2) Inteligencia: a BeIa le so o resumo (poucos KB)
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -69,11 +59,11 @@ jobs:
       - name: Instalar Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Orquestrador (modo headless)
+      - name: BeIa (modo headless)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          claude -p "Execute a rotina diaria descrita no CLAUDE.md para a data de hoje. Gere o relatorio em relatorios/ e registre as novas demandas." \
+          claude -p "Execute a rotina diaria descrita no CLAUDE.md para a data ${{ steps.data.outputs.data }}. Gere o relatorio em relatorios/ e registre as novas demandas." \
             --allowedTools "Read,Write,Edit,Task,Bash(python scripts/adicionar_demanda.py:*),Bash(python scripts/consulta.py:*),Bash(python scripts/verificar_demandas.py:*)" \
             --max-turns 40
 
@@ -82,5 +72,10 @@ jobs:
           git config user.name "rotina-diaria"
           git config user.email "rotina-diaria@users.noreply.github.com"
           git add dados/empresa.db dados/diario demandas memoria relatorios
-          git diff --cached --quiet && echo "Nada a commitar" || git commit -m "Rotina diaria $(date +%F)"
-          git push
+          if git diff --cached --quiet; then
+            echo "Nada a commitar"
+          else
+            git commit -m "Rotina diaria ${{ steps.data.outputs.data }}"
+            git pull --rebase origin main
+            git push
+          fi

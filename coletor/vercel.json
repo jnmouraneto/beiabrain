@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    { "path": "/api/coletar", "schedule": "0 9 * * *" }
+  ],
+  "functions": {
+    "api/coletar.js": { "maxDuration": 300 }
+  },
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- ."
+}

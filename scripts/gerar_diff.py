@@ -6,17 +6,26 @@ Nenhuma IA aqui: so Python/SQL. O Claude le apenas o JSON de saida
 Uso: python scripts/gerar_diff.py [--data AAAA-MM-DD]
 """
 import argparse
+import gzip
+import json
 import sys
 
-from common import BRUTO, DIARIO, conectar, gravar_json, hoje, ler_json
+from common import BRUTO, DIARIO, ENTRADA, conectar, gravar_json, hoje, ler_json
 
 TOP = 15  # limite de itens por lista no resumo (economia de tokens)
 
 
 def carregar(data):
+    # 1) Caminho normal: arquivo unico publicado pelo coletor da Vercel.
+    gz = ENTRADA / f"{data}.json.gz"
+    if gz.exists():
+        with gzip.open(gz, "rt", encoding="utf-8") as f:
+            d = json.load(f)
+        return d["produtos"], d["saldos"], d["clientes"], d["vendas"]
+    # 2) Alternativa manual: pasta dados/bruto/<data>/ gerada por puxar_bling.py ou mock_bling.py.
     pasta = BRUTO / data
     if not pasta.exists():
-        sys.exit(f"Sem dados brutos para {data} em {pasta}")
+        sys.exit(f"Sem dados para {data}: nem {gz} nem {pasta}")
     return (
         ler_json(pasta / "produtos.json", []),
         ler_json(pasta / "saldos.json", []),
@@ -27,8 +36,15 @@ def carregar(data):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=hoje())
+    ap.add_argument("--data", default=hoje(),
+                    help="AAAA-MM-DD ou 'ultima' (arquivo mais recente em dados/entrada)")
     data = ap.parse_args().data
+    if data == "ultima":
+        arquivos = sorted(ENTRADA.glob("*.json.gz"))
+        if not arquivos:
+            sys.exit(f"Nenhum arquivo em {ENTRADA}")
+        data = arquivos[-1].name.removesuffix(".json.gz")
+        print(f"Usando o arquivo mais recente: {data}")
 
     produtos, saldos, clientes, vendas = carregar(data)
     con = conectar()

@@ -3,7 +3,9 @@
 Orquestrador de agentes de IA (Claude Code) para uma papelaria, alimentado pelo Bling.
 
 ```
-Bling API -> scripts Python (sem IA) -> SQLite + resumo diario (poucos KB)
+Vercel Cron -> coletor/ (Bling API) -> dados/entrada/*.json.gz no GitHub
+                                              |  (push dispara o Actions)
+              scripts Python (sem IA) -> SQLite + resumo diario (poucos KB)
                                               |
                        Orquestrador (CLAUDE.md) + subagentes (.claude/agents)
                                               |
@@ -18,8 +20,9 @@ alertas, e gera `dados/diario/AAAA-MM-DD-resumo.json` (~4 KB). Detalhes pontuais
 ## Scripts
 | Script | O que faz |
 |---|---|
-| `puxar_bling.py` | Coleta produtos, saldos, clientes e vendas da API v3 (CPF/CNPJ vira hash; sem telefone/e-mail) |
-| `gerar_diff.py` | Atualiza o SQLite, detecta variacoes e gera o resumo do dia (idempotente) |
+| `puxar_bling.py` | Coleta manual/local da API v3 (alternativa ao coletor da Vercel; nao use os dois com o mesmo token) |
+| `importar_vendas.py` | Importa o historico de vendas de `dados/historico/` para o SQLite |
+| `gerar_diff.py` | Le `dados/entrada/` (ou `--data ultima`), atualiza o SQLite e gera o resumo do dia (idempotente) |
 | `adicionar_demanda.py` | Registra uma sugestao com criterio de verificacao |
 | `verificar_demandas.py` | Marca demandas como atendida/pendente/expirada e gera `demandas/placar.json` |
 | `consulta.py` | SQL somente leitura para os agentes |
@@ -36,17 +39,11 @@ python scripts/verificar_demandas.py --data 2026-10-29
 ```
 Use `BEIA_ROOT=/pasta/qualquer` para nao misturar o teste com os dados reais.
 
-## Configurar o Bling
-1. No Bling: Preferencias > Sistema > Integracoes (Area do Desenvolvedor) > criar app da API v3.
-2. Autorizar o app uma vez (fluxo OAuth) para obter o primeiro `refresh_token`.
-3. Variaveis: `BLING_CLIENT_ID`, `BLING_CLIENT_SECRET`, `BLING_REFRESH_TOKEN`.
-4. Carga inicial: `python scripts/puxar_bling.py --dias 90 --detalhes` (o `--detalhes` busca estoque
-   minimo e custo por produto, ~3 req/s: cerca de 12 min para 2 mil produtos; rode so de vez em quando).
-
-## Secrets do GitHub (rotina diaria)
-`BLING_CLIENT_ID`, `BLING_CLIENT_SECRET`, `BLING_REFRESH_TOKEN`, `ANTHROPIC_API_KEY` e
-`GH_PAT_SECRETS` (token fine-grained com "Secrets: read and write" so neste repo, usado para
-guardar o refresh token novo que o Bling gera a cada execucao).
+## Coleta do Bling e rotina diaria
+A coleta roda na Vercel (pasta `coletor/`, passo a passo em `coletor/README.md`) e publica
+`dados/entrada/AAAA-MM-DD.json.gz`. O push dispara o workflow *Rotina diaria*, que gera o diff,
+verifica as demandas e aciona a BeIa. Secrets do GitHub necessarios: apenas `ANTHROPIC_API_KEY`.
+Atencao: o plano Hobby da Vercel e so para uso nao comercial; em producao use o Pro.
 
 ## Usar no dia a dia
 `git pull`, abrir o Claude Code nesta pasta e conversar com o orquestrador.

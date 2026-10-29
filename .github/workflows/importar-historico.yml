@@ -1,0 +1,40 @@
+name: Importar historico de vendas
+
+# Dispara quando o coletor da Vercel publica dados/historico/vendas-*.json.gz (carga inicial).
+# Importa para o SQLite e commita o banco. Nao aciona a BeIa (nao gasta tokens de IA).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dados/historico/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rotina-diaria   # mesmo grupo da rotina diaria: nunca mexem no banco ao mesmo tempo
+  cancel-in-progress: false
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/importar_vendas.py
+      - name: Commit do banco
+        run: |
+          git config user.name "rotina-diaria"
+          git config user.email "rotina-diaria@users.noreply.github.com"
+          git add dados/empresa.db
+          if git diff --cached --quiet; then
+            echo "Nada a commitar"
+          else
+            git commit -m "Importa historico de vendas"
+            git pull --rebase origin main
+            git push
+          fi
