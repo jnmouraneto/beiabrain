@@ -51,20 +51,18 @@ Ele permite que a funcao publique os arquivos e, por ser token de usuario, o pus
 | `GITHUB_TOKEN` | token fine-grained do passo 2 |
 | `GITHUB_REPO` | `jnmouraneto/beiabrain` |
 | `CRON_SECRET` | texto aleatorio longo (a Vercel o envia no cabecalho do cron) |
+| `BLING_REFRESH_TOKEN` | **so na 1a execucao**: refresh token inicial do Bling. Apague depois (passo 4) |
 | `VENDAS_DIAS` | opcional, janela diaria de vendas (padrao 2) |
 | `BLING_SITUACOES_IGNORAR` | opcional, ids de situacao de pedido a descartar, ex.: `12345` (cancelado). Veja abaixo |
 
 5. Deploy. O `ignoreCommand` do `vercel.json` evita redeploy a cada commit de dados.
 
-### 4. Semear o refresh token (uma vez)
-```bash
-cd coletor && npm install
-npx vercel link && npx vercel env pull .env.local
-# carregue as variaveis do .env.local e rode:
-BLING_REFRESH_TOKEN="<token do passo 1>" npm run semear-token
-```
-Depois disso **nao use mais esse token em outro lugar** (nem em testes locais com a API): o Bling invalida
-o anterior a cada renovacao, e quem renova e a funcao.
+### 4. Primeiro disparo e token inicial (uma vez)
+Com `BLING_REFRESH_TOKEN` definido na Vercel (passo 3), faca o primeiro disparo (passo 6). A funcao
+usa essa variavel **so se o Redis estiver vazio**, renova o token e guarda o novo no Redis. Depois
+**apague `BLING_REFRESH_TOKEN` da Vercel**: ele passa a ser invalido (o Bling troca o token a cada uso)
+e o Redis e quem manda. Nunca use o mesmo token em outro lugar.
+Alternativa sem variavel: `npm run semear-token` (precisa de Node e `vercel env pull`).
 
 ### 5. Carga do historico de vendas (uma vez, antes de depender do giro)
 Sem historico, giro, cobertura e parados ficam vazios por ~1 mes. Janelas de 7 dias, da mais antiga
@@ -83,6 +81,10 @@ Janelas que se sobrepoem sao seguras (importacao idempotente).
 ### 6. Testar a coleta diaria
 ```bash
 curl -sS -H "Authorization: Bearer $CRON_SECRET" "$URL"
+```
+No PowerShell (Windows):
+```powershell
+Invoke-RestMethod -Headers @{Authorization="Bearer SEU_CRON_SECRET"} "https://SEU-PROJETO.vercel.app/api/coletar?detalhes=0"
 ```
 Resposta com `arquivo`, `produtos`, `pedidos` etc. Em seguida o GitHub Actions deve disparar
 (*Rotina diaria*). Para acompanhar: aba *Logs* na Vercel e aba *Actions* no GitHub.

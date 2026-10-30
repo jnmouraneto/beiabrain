@@ -302,6 +302,18 @@ test("refresh token invalido: erro claro e lock liberado", async () => {
   assert.equal(await redis.get("bling:lock"), null);
 });
 
+test("semente: usa BLING_REFRESH_TOKEN so quando o Redis esta vazio; depois o Redis manda", async () => {
+  const comSemente = { ...env, BLING_REFRESH_TOKEN: "R0" };
+  const r1 = await executar({ store, env: comSemente, ...opcoes, detalhes: false });
+  assert.equal(r1.status, 200, JSON.stringify(r1.corpo));
+  assert.equal(await redis.get("bling:refresh_token"), "R1");
+  // variavel de ambiente esquecida (agora invalida) nao pode atrapalhar as proximas execucoes
+  await redis.del("bling:access_token");
+  const r2 = await executar({ store, env: comSemente, ...opcoes, detalhes: false });
+  assert.equal(r2.status, 200, JSON.stringify(r2.corpo));
+  assert.equal(await redis.get("bling:refresh_token"), "R2");
+});
+
 test("sem refresh token no Redis: orienta a semear", async () => {
   await assert.rejects(() => executar({ store, env, ...opcoes }), /semear-token/);
   assert.equal(await redis.get("bling:lock"), null);

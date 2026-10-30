@@ -13,11 +13,12 @@ export class Bling {
    * @param {{store: import('./store.js').Store, clientId: string, clientSecret: string,
    *          pausaMs?: number, prazo: number}} opts  prazo = timestamp (ms) limite da execucao
    */
-  constructor({ store, clientId, clientSecret, pausaMs = 400, prazo }) {
+  constructor({ store, clientId, clientSecret, refreshSemente, pausaMs = 400, prazo }) {
     if (!clientId || !clientSecret) throw new Error("Defina BLING_CLIENT_ID e BLING_CLIENT_SECRET.");
     this.store = store;
     this.clientId = clientId;
     this.clientSecret = clientSecret;
+    this.refreshSemente = refreshSemente; // so vale se o Redis ainda nao tem token (1a execucao)
     this.pausaMs = pausaMs;
     this.prazo = prazo;
     this.access = null;
@@ -28,9 +29,12 @@ export class Bling {
   }
 
   async _renovar() {
-    const refresh = await this.store.lerRefreshToken();
+    // O Redis tem prioridade: depois da 1a renovacao o token da variavel de ambiente fica invalido.
+    const refresh = (await this.store.lerRefreshToken()) ?? this.refreshSemente;
     if (!refresh) {
-      throw new Error("Sem refresh token no Redis. Grave o inicial com: npm run semear-token");
+      throw new Error(
+        "Sem refresh token. Defina BLING_REFRESH_TOKEN na Vercel (1a execucao) ou rode: npm run semear-token",
+      );
     }
     const basic = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString("base64");
     const r = await fetch(`${API}/oauth/token`, {

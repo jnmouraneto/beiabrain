@@ -33,6 +33,7 @@ export async function executarHistorico({ store, env, ate, dias = 7, pausaMs, li
       store,
       clientId: env.BLING_CLIENT_ID,
       clientSecret: env.BLING_CLIENT_SECRET,
+      refreshSemente: env.BLING_REFRESH_TOKEN,
       pausaMs,
       prazo: inicio + limiteMs,
     });
@@ -70,6 +71,7 @@ export async function executar({ store, env, dias, detalhes = true, pausaMs, lim
       store,
       clientId: env.BLING_CLIENT_ID,
       clientSecret: env.BLING_CLIENT_SECRET,
+      refreshSemente: env.BLING_REFRESH_TOKEN,
       pausaMs,
       prazo: inicio + limiteMs,
     });
