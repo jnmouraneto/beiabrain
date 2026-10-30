@@ -56,16 +56,44 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Instalar Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+      - name: Instalar Claude Code e o roteador de modelo
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          pip install 'litellm[proxy]'
+
+      # DeepSeek e o modelo principal; o Gemini assume sozinho quando a DeepSeek falha.
+      # O Claude Code conversa com o roteador local (porta 4000), que fala com os dois.
+      - name: Subir roteador de modelo
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL || 'deepseek/deepseek-v4-pro' }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini/gemini-3.8-flash' }}
+          LITELLM_MASTER_KEY: sk-local-beia
+        run: |
+          nohup litellm --config llm/litellm.yaml --port 4000 > litellm.log 2>&1 &
+          for i in $(seq 1 60); do curl -s http://127.0.0.1:4000/health/liveliness >/dev/null && exit 0; sleep 1; done
+          cat litellm.log; exit 1
 
       - name: BeIa (modo headless)
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: http://127.0.0.1:4000
+          ANTHROPIC_AUTH_TOKEN: sk-local-beia
+          ANTHROPIC_MODEL: beia-llm
+          ANTHROPIC_DEFAULT_OPUS_MODEL: beia-llm
+          ANTHROPIC_DEFAULT_SONNET_MODEL: beia-llm
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: beia-llm
+          CLAUDE_CODE_SUBAGENT_MODEL: beia-llm
+          CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
         run: |
           claude -p "Execute a rotina diaria descrita no CLAUDE.md para a data ${{ steps.data.outputs.data }}. Gere o relatorio em relatorios/ e registre as novas demandas." \
             --allowedTools "Read,Write,Edit,Task,Bash(python scripts/adicionar_demanda.py:*),Bash(python scripts/consulta.py:*),Bash(python scripts/verificar_demandas.py:*)" \
             --max-turns 40
+
+      - name: Log do roteador (se falhou)
+        if: failure()
+        run: tail -n 60 litellm.log || true
 
       - name: Commit dos resultados
         run: |

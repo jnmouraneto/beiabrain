@@ -1,0 +1,17 @@
+# Roteador local de modelo (LiteLLM). O Claude Code fala com ele no formato Anthropic;
+# ele encaminha para a DeepSeek e, se ela falhar (saldo acabou, limite, erro, chave), usa o Gemini.
+# Testado so contra servidores simulados: 402, 429, 500, 401 e 400 da DeepSeek caem no Gemini.
+model_list:
+  - model_name: beia-llm
+    litellm_params:
+      model: os.environ/DEEPSEEK_MODEL        # ex.: deepseek/deepseek-v4-pro
+      api_key: os.environ/DEEPSEEK_API_KEY
+  - model_name: beia-llm-reserva
+    litellm_params:
+      model: os.environ/GEMINI_MODEL          # ex.: gemini/gemini-3.8-flash
+      api_key: os.environ/GEMINI_API_KEY
+litellm_settings:
+  num_retries: 1
+  fallbacks: [{"beia-llm": ["beia-llm-reserva"]}]
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

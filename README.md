@@ -41,7 +41,7 @@ Use `BEIA_ROOT=/pasta/qualquer` para nao misturar o teste com os dados reais.
 ## Coleta do Bling e rotina diaria
 A coleta roda na Vercel (pasta `coletor/`, passo a passo em `coletor/README.md`) e publica
 `dados/entrada/AAAA-MM-DD.json.gz`. O push dispara o workflow *Rotina diaria*, que gera o diff,
-verifica as demandas e aciona a BeIa. Secrets do GitHub necessarios: apenas `ANTHROPIC_API_KEY`.
+verifica as demandas e aciona a BeIa. Secrets do GitHub: `DEEPSEEK_API_KEY` (principal) e `GEMINI_API_KEY` (reserva automatica). Opcional, em *Variables*: `DEEPSEEK_MODEL` (padrao `deepseek/deepseek-v4-pro`) e `GEMINI_MODEL` (padrao `gemini/gemini-3.8-flash`). O roteador `llm/litellm.yaml` troca para o Gemini se a DeepSeek falhar.
 Atencao: o plano Hobby da Vercel e so para uso nao comercial; em producao use o Pro.
 
 ## Usar no dia a dia
