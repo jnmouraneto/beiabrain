@@ -1,7 +1,7 @@
 """Importa o historico de vendas publicado pelo coletor em dados/historico/vendas-*.json.gz.
 
 Idempotente (INSERT OR IGNORE): pode rodar varias vezes e com janelas que se sobrepoem.
-Nao altera produtos, saldos nem movimentos. Depois de importar, rode gerar_diff.py para
+Tambem importa os clientes que aparecem nos pedidos. Nao altera produtos, saldos nem movimentos. Depois de importar, rode gerar_diff.py para
 recalcular giro e cobertura com o historico.
 
 Uso: python scripts/importar_vendas.py
@@ -30,7 +30,13 @@ def main():
                     (v["id"], v["data"], v["cliente_id"], it["produto_id"],
                      it["quantidade"], it["valor"]),
                 )
-        print(f"{arq.name}: {len(d['vendas'])} pedidos")
+        # Clientes vem dos pedidos (nome, tipo, hash do documento). "primeira_vez" = fim da janela.
+        for c in d.get("clientes", []):
+            cur.execute(
+                "INSERT OR IGNORE INTO clientes VALUES (?,?,?,?,?)",
+                (c["id"], c["nome"], c["tipo"], c["doc_hash"], d["ate"]),
+            )
+        print(f"{arq.name}: {len(d['vendas'])} pedidos, {len(d.get('clientes', []))} clientes")
     con.commit()
     total_depois = cur.execute("SELECT COUNT(*) FROM vendas_itens").fetchone()[0]
     faixa = cur.execute("SELECT MIN(data), MAX(data) FROM vendas_itens").fetchone()

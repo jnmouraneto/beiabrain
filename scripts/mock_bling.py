@@ -1,4 +1,4 @@
-"""Gera dados SIMULADOS no mesmo formato de puxar_bling.py, para testar o pipeline sem o Bling.
+"""Gera dados SIMULADOS no mesmo formato do coletor (coletor/), para testar o pipeline sem o Bling.
 
 Uso: python scripts/mock_bling.py --data 2026-10-28 --cenario 1
      python scripts/mock_bling.py --data 2026-10-29 --cenario 2

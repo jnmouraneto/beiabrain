@@ -17,14 +17,19 @@ cursor, lock) fica no Redis. Os dados vao para o repositorio como um unico `.jso
 - **Hobby e so para uso pessoal e nao comercial.** A Be Papel e um negocio: para producao use o
   plano **Pro** (US$ 20 por usuario/mes) numa conta da Vercel sua ou do cliente. Em Hobby, so
   para testar e validar.
-- Por isso a funcao termina em ~1-2 min na coleta diaria, e o que e lento (estoque minimo/custo
-  por produto, ~2 mil chamadas) e feito aos poucos, nos minutos que sobram de cada execucao.
-  O estoque minimo e o custo aparecem no arquivo **do dia seguinte** em diante (cache no Redis).
+- Por isso a coleta diaria e curta (calcule ~0,4 s por chamada, o limite do Bling e 3 por segundo), e o
+  que e lento (estoque minimo por produto, ~2 mil chamadas) e feito aos poucos, nos minutos que
+  sobram de cada execucao. O estoque minimo aparece no arquivo **dos dias seguintes**, conforme o
+  cache no Redis enche (em torno de 4 a 6 dias para ~2 mil produtos).
 
 ## Passo a passo
 
 ### 1. App no Bling (uma vez)
 1. Crie o app da API v3 na area do desenvolvedor do Bling e anote **client id** e **client secret**.
+   **Escopos necessarios:** *Produtos* (lista, saldo, custo e estoque minimo) e *Pedidos de Venda*.
+   Os demais (Categoria de Produtos, Controle de Estoque, Depositos de Estoque) nao sao usados hoje;
+   deixe so se for usar depois. Nao e preciso o escopo *Contatos*: os clientes vem dos pedidos.
+   Se mudar os escopos depois de autorizar, autorize o app de novo (gera outro refresh token).
 2. Autorize o app (link de convite do app). O Bling redireciona com um `code`; troque-o por tokens
    (`POST /oauth/token`, `grant_type=authorization_code`, mesma autenticacao Basic). Guarde o
    **refresh token** que vier. Confira os detalhes na documentacao do Bling.
@@ -47,6 +52,7 @@ Ele permite que a funcao publique os arquivos e, por ser token de usuario, o pus
 | `GITHUB_REPO` | `jnmouraneto/beiabrain` |
 | `CRON_SECRET` | texto aleatorio longo (a Vercel o envia no cabecalho do cron) |
 | `VENDAS_DIAS` | opcional, janela diaria de vendas (padrao 2) |
+| `BLING_SITUACOES_IGNORAR` | opcional, ids de situacao de pedido a descartar, ex.: `12345` (cancelado). Veja abaixo |
 
 5. Deploy. O `ignoreCommand` do `vercel.json` evita redeploy a cada commit de dados.
 
@@ -57,7 +63,7 @@ npx vercel link && npx vercel env pull .env.local
 # carregue as variaveis do .env.local e rode:
 BLING_REFRESH_TOKEN="<token do passo 1>" npm run semear-token
 ```
-Depois disso **nao use mais esse token em outro lugar** (nem no `puxar_bling.py`): o Bling invalida
+Depois disso **nao use mais esse token em outro lugar** (nem em testes locais com a API): o Bling invalida
 o anterior a cada renovacao, e quem renova e a funcao.
 
 ### 5. Carga do historico de vendas (uma vez, antes de depender do giro)
@@ -80,6 +86,21 @@ curl -sS -H "Authorization: Bearer $CRON_SECRET" "$URL"
 ```
 Resposta com `arquivo`, `produtos`, `pedidos` etc. Em seguida o GitHub Actions deve disparar
 (*Rotina diaria*). Para acompanhar: aba *Logs* na Vercel e aba *Actions* no GitHub.
+
+## Pedidos cancelados
+A coleta guarda a situacao de cada pedido e a resposta mostra a contagem por situacao, por exemplo
+`"situacoes": {"6":120,"9":4}`. Na primeira chamada, veja no Bling (Pedidos de venda) qual id e
+"Cancelado" (e outras que nao contam como venda, como "Em digitacao"), coloque em
+`BLING_SITUACOES_IGNORAR` e faca redeploy. Ate la, pedidos cancelados contam como venda.
+
+## O que a coleta traz do Bling
+- **Produtos:** `GET /produtos` (ativos), que ja devolve preco, custo e saldo (`estoque.saldoVirtualTotal`).
+  Consulta os tres filtros de saldo (positivo, zerado, negativo) porque a especificacao nao deixa claro
+  se produtos zerados aparecem sem o filtro, e as variacoes (tipo V). O produto "pai" de variacoes e
+  servicos ficam de fora.
+- **Estoque minimo:** `GET /produtos/{id}`, aos poucos (a lista nao traz).
+- **Vendas e clientes:** `GET /pedidos/vendas` e o detalhe de cada pedido (itens). Cliente = contato do pedido.
+- Nao usa `/estoques/saldos` nem `/contatos`.
 
 ## Operacao
 - **Conflito de execucoes:** um lock no Redis impede duas execucoes ao mesmo tempo (resposta 409).

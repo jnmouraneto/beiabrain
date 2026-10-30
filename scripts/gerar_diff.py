@@ -22,7 +22,7 @@ def carregar(data):
         with gzip.open(gz, "rt", encoding="utf-8") as f:
             d = json.load(f)
         return d["produtos"], d["saldos"], d["clientes"], d["vendas"]
-    # 2) Alternativa manual: pasta dados/bruto/<data>/ gerada por puxar_bling.py ou mock_bling.py.
+    # 2) Alternativa manual: pasta dados/bruto/<data>/ gerada por mock_bling.py (testes).
     pasta = BRUTO / data
     if not pasta.exists():
         sys.exit(f"Sem dados para {data}: nem {gz} nem {pasta}")

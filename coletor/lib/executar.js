@@ -1,13 +1,12 @@
 // Orquestra uma execucao diaria: coleta -> publica no GitHub -> usa o tempo que sobrar
 // para buscar detalhes (estoque minimo e custo) de alguns produtos.
 import { Bling } from "./bling.js";
-import {
-  coletarClientes,
-  coletarDetalhes,
-  coletarProdutos,
-  coletarSaldos,
-  coletarVendas,
-} from "./coletores.js";
+import { coletarDetalhes, coletarProdutos, coletarVendas } from "./coletores.js";
+
+// BLING_SITUACOES_IGNORAR="12345,67890": ids das situacoes de pedido a descartar (ex.: cancelado).
+// A resposta da coleta lista as situacoes encontradas (campo "situacoes") para voce descobrir os ids.
+const idsIgnorados = (env) =>
+  new Set(String(env.BLING_SITUACOES_IGNORAR ?? "").split(",").map((x) => Number(x.trim())).filter(Boolean));
 
 export const LIMITE_MS = 280_000; // Hobby: 300 s no maximo. Deixa folga para responder.
 
@@ -38,8 +37,8 @@ export async function executarHistorico({ store, env, ate, dias = 7, pausaMs, li
       prazo: inicio + limiteMs,
     });
     await b.iniciar();
-    const vendas = await coletarVendas(b, dias, ate);
-    const arquivo = await store.publicarHistorico(ate, { ate, dias, vendas });
+    const { vendas, clientes, situacoes } = await coletarVendas(b, dias, ate, idsIgnorados(env));
+    const arquivo = await store.publicarHistorico(ate, { ate, dias, vendas, clientes });
     return {
       status: 200,
       corpo: {
@@ -47,6 +46,7 @@ export async function executarHistorico({ store, env, ate, dias = 7, pausaMs, li
         ate,
         dias,
         pedidos: vendas.length,
+        situacoes,
         duracao_s: Math.round((Date.now() - inicio) / 1000),
       },
     };
@@ -76,11 +76,9 @@ export async function executar({ store, env, dias, detalhes = true, pausaMs, lim
     await b.iniciar();
 
     const cacheDetalhes = await store.lerDetalhes();
-    const produtos = await coletarProdutos(b, cacheDetalhes);
-    const saldos = await coletarSaldos(b, produtos);
-    const clientes = await coletarClientes(b);
+    const { produtos, saldos } = await coletarProdutos(b, cacheDetalhes);
     const janela = dias ?? (Number(env.VENDAS_DIAS) || 2);
-    const vendas = await coletarVendas(b, janela, data);
+    const { vendas, clientes, situacoes } = await coletarVendas(b, janela, data, idsIgnorados(env));
 
     const arquivo = await store.publicarEntrada(data, { data, produtos, saldos, clientes, vendas });
 
@@ -92,6 +90,7 @@ export async function executar({ store, env, dias, detalhes = true, pausaMs, lim
       saldos: saldos.length,
       clientes: clientes.length,
       pedidos: vendas.length,
+      situacoes,
       detalhes_em_cache: cacheDetalhes.size,
     };
 

@@ -2,7 +2,6 @@
 dados/bruto/
 # Tokens e segredos
 .env
-dados/.bling_token.json
 *.token
 # Python
 __pycache__/

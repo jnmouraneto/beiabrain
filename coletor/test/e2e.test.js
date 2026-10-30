@@ -1,12 +1,14 @@
 // Teste de ponta a ponta com Bling, Redis e GitHub SIMULADOS (nenhuma rede real).
-// Rodar: npm test   |   TEST_OUT=/pasta npm test  (grava o arquivo publicado para conferir no Python)
+// O Bling simulado segue a especificacao OpenAPI oficial e e propositalmente adversarial:
+//  - sem filtroSaldoEstoque, a lista omite produtos zerados e negativos (pior caso do padrao "1");
+//  - tipo=P devolve simples, o produto "pai" e um servico; as variacoes so aparecem em tipo=V.
+// Rodar: npm test   |   TEST_OUT=/pasta npm test  (grava os arquivos publicados para o teste Python)
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { test, beforeEach } from "node:test";
 import { gunzipSync } from "node:zlib";
 
 import handler from "../api/coletar.js";
-import { Bling } from "../lib/bling.js";
 import { coletarDetalhes } from "../lib/coletores.js";
 import { executar, executarHistorico, hojeSaoPaulo } from "../lib/executar.js";
 import { Store } from "../lib/store.js";
@@ -40,26 +42,45 @@ class FakeRedis {
   }
 }
 
-// ---------- Bling + GitHub falsos (via fetch global) ----------
-const N_PRODUTOS = 250; // 3 paginas de 100: exercita a paginacao
+// ---------- catalogo do Bling simulado ----------
+const N_SIMPLES = 250; // ids 1001..1250: 3 paginas de 100 (exercita a paginacao)
+const IDS_VALIDOS = 252; // 250 simples + 2 variacoes; o pai (3000) e o servico (4000) ficam de fora
+const saldoDe = (id) => (id === 1003 ? -2 : id % 50); // 1050, 1100... zerados; 1003 negativo
+
+const simples = Array.from({ length: N_SIMPLES }, (_, i) => {
+  const id = 1000 + i + 1;
+  return {
+    id, codigo: `SKU-${String(i + 1).padStart(3, "0")}`, nome: `Produto ${i + 1}`,
+    preco: 10 + i, precoCusto: 4, tipo: "P", formato: "S", situacao: "A",
+    estoque: { saldoVirtualTotal: saldoDe(id) },
+  };
+});
+const pai = { id: 3000, codigo: "PAPEL-COR", nome: "Papel Color (pai)", preco: 8.5, precoCusto: 4,
+  tipo: "P", formato: "V", situacao: "A", estoque: { saldoVirtualTotal: 7 } };
+const variacoes = [
+  { id: 3001, idProdutoPai: 3000, codigo: "PAPEL-COR-AZ", nome: "Papel Color Azul", preco: 8.5,
+    precoCusto: 4, tipo: "P", formato: "S", situacao: "A", estoque: { saldoVirtualTotal: 7 } },
+  { id: 3002, idProdutoPai: 3000, codigo: "PAPEL-COR-VD", nome: "Papel Color Verde", preco: 8.5,
+    precoCusto: 4, tipo: "P", formato: "S", situacao: "A", estoque: { saldoVirtualTotal: 0 } },
+];
+const servico = { id: 4000, codigo: "SRV", nome: "Servico de impressao", preco: 5, tipo: "S",
+  formato: "S", situacao: "A", estoque: { saldoVirtualTotal: 0 } };
+
 const hoje = hojeSaoPaulo();
 let st;
 
 function resetar() {
   st = {
-    refreshValido: "R0",
-    accessValido: "A0",
-    renovacoes: 0,
-    detalhesPedidos: [],
-    chamadasVendas: [],
-    rotas: [],
-    github: new Map(), // caminho -> {sha, content}
-    githubPuts: 0,
+    refreshValido: "R0", accessValido: "A0", renovacoes: 0,
+    detalhesPedidos: [], pedidoDetalhes: [], chamadasVendas: [], rotas: [], consultasProdutos: [],
+    github: new Map(), githubPuts: 0,
   };
 }
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
+
+const classe = (s) => (s > 0 ? 1 : s === 0 ? 0 : 2); // filtroSaldoEstoque: 1 positivo, 0 zerado, 2 negativo
 
 globalThis.fetch = async (url, init = {}) => {
   const u = new URL(String(url));
@@ -105,15 +126,12 @@ globalThis.fetch = async (url, init = {}) => {
   const fatia = (arr) => arr.slice((pagina - 1) * limite, pagina * limite);
 
   if (rota === "/produtos") {
-    assert.equal(u.searchParams.get("criterio"), "2");
-    const todos = Array.from({ length: N_PRODUTOS }, (_, i) => ({
-      id: 1000 + i + 1,
-      codigo: `SKU-${String(i + 1).padStart(3, "0")}`,
-      nome: `Produto ${i + 1}`,
-      preco: 10 + i,
-      situacao: "A",
-    }));
-    return json({ data: fatia(todos) });
+    assert.equal(u.searchParams.get("criterio"), "2"); // ativos
+    const tipo = u.searchParams.get("tipo");
+    const filtro = Number(u.searchParams.get("filtroSaldoEstoque") ?? 1); // padrao da spec: 1
+    st.consultasProdutos.push({ tipo, filtro, pagina });
+    const base = tipo === "V" ? variacoes : [...simples, pai, servico];
+    return json({ data: fatia(base.filter((p) => classe(p.estoque.saldoVirtualTotal) === filtro)) });
   }
   let m;
   if ((m = rota.match(/^\/produtos\/(\d+)$/))) {
@@ -121,38 +139,23 @@ globalThis.fetch = async (url, init = {}) => {
     st.detalhesPedidos.push(id);
     return json({ data: { id, estoque: { minimo: 5 }, fornecedor: { precoCusto: 3.5 } } });
   }
-  if (rota === "/estoques/saldos") {
-    const ids = u.searchParams.getAll("idsProdutos[]").map(Number);
-    assert.ok(ids.length <= 100);
-    return json({
-      data: ids.map((id) => ({ produto: { id }, saldoFisicoTotal: id % 50, saldoVirtualTotal: id % 50 })),
-    });
-  }
-  if (rota === "/contatos") {
-    const todos = Array.from({ length: 130 }, (_, i) => ({
-      id: 5000 + i,
-      nome: `Cliente ${i}`,
-      tipo: "J",
-      numeroDocumento: `12.345.678/0001-${String(i).padStart(2, "0")}`,
-      telefone: "91999999999", // nao deve aparecer na saida
-      email: "x@y.com", // nao deve aparecer na saida
-    }));
-    return json({ data: fatia(todos) });
-  }
   if (rota === "/pedidos/vendas") {
-    st.chamadasVendas.push({
-      ini: u.searchParams.get("dataInicial"),
-      fim: u.searchParams.get("dataFinal"),
-    });
+    st.chamadasVendas.push({ ini: u.searchParams.get("dataInicial"), fim: u.searchParams.get("dataFinal") });
     const todos = Array.from({ length: 7 }, (_, i) => ({
       id: 9000 + i,
-      data: `${hoje} 10:00:00`,
+      numero: 100 + i,
+      data: hoje, // a API devolve so a data
       total: 50,
-      contato: { id: 5000 + i },
+      situacao: { id: i === 6 ? 200 : 100, valor: i === 6 ? 2 : 1 }, // 200 = "cancelado"
+      contato: {
+        id: 5000 + i, nome: `Cliente ${i}`, tipoPessoa: i % 2 ? "F" : "J",
+        numeroDocumento: `12.345.678/0001-${String(i).padStart(2, "0")}`,
+      },
     }));
     return json({ data: fatia(todos) });
   }
   if ((m = rota.match(/^\/pedidos\/vendas\/(\d+)$/))) {
+    st.pedidoDetalhes.push(Number(m[1]));
     return json({
       data: {
         itens: [
@@ -169,17 +172,18 @@ globalThis.fetch = async (url, init = {}) => {
 // ---------- helpers ----------
 let redis, store;
 const env = { BLING_CLIENT_ID: "cid", BLING_CLIENT_SECRET: "sec" };
+const opcoes = { pausaMs: 0, limiteMs: 20_000 };
 
 function novoStore() {
   redis = new FakeRedis();
   store = new Store({ redis, github: { token: "ghtoken", repo: "dono/repo" } });
 }
-const opcoes = { pausaMs: 0, limiteMs: 20_000 };
-const lerPublicado = () => {
-  const f = st.github.get(`dados/entrada/${hoje}.json.gz`);
-  assert.ok(f, "arquivo do dia nao foi publicado");
+const publicado = (caminho) => {
+  const f = st.github.get(caminho);
+  assert.ok(f, `arquivo nao publicado: ${caminho}`);
   return JSON.parse(gunzipSync(Buffer.from(f.content, "base64")).toString());
 };
+const lerPublicado = () => publicado(`dados/entrada/${hoje}.json.gz`);
 
 beforeEach(() => {
   resetar();
@@ -191,29 +195,48 @@ test("primeira execucao: coleta tudo, rotaciona token, publica e busca detalhes"
   await redis.set("bling:refresh_token", "R0");
   const { status, corpo } = await executar({ store, env, ...opcoes });
   assert.equal(status, 200, JSON.stringify(corpo));
-  assert.equal(corpo.produtos, N_PRODUTOS);
-  assert.equal(corpo.saldos, N_PRODUTOS);
-  assert.equal(corpo.clientes, 130);
+  assert.equal(corpo.produtos, IDS_VALIDOS);
+  assert.equal(corpo.saldos, IDS_VALIDOS);
+  assert.equal(corpo.clientes, 7);
   assert.equal(corpo.pedidos, 7);
-  assert.equal(corpo.detalhes_buscados_agora, N_PRODUTOS); // sobrou tempo para todos
+  assert.deepEqual(corpo.situacoes, { 100: 6, 200: 1 }); // mostra as situacoes para voce escolher o que ignorar
+  assert.equal(corpo.detalhes_buscados_agora, IDS_VALIDOS);
   assert.equal(corpo.detalhes_erro, undefined);
 
-  // token rotacionado e guardado; lock liberado
-  assert.equal(await redis.get("bling:refresh_token"), "R1");
+  assert.equal(await redis.get("bling:refresh_token"), "R1"); // token rotacionado e guardado
   assert.equal(await redis.get("bling:lock"), null);
 
   const pub = lerPublicado();
   assert.equal(pub.data, hoje);
-  assert.equal(pub.produtos.length, N_PRODUTOS);
   assert.deepEqual(Object.keys(pub.produtos[0]).sort(),
-    ["codigo", "custo", "estoque_min", "id", "nome", "preco", "situacao"]);
-  assert.equal(pub.vendas[0].data, hoje); // "AAAA-MM-DD hh:mm:ss" -> "AAAA-MM-DD"
-  assert.equal(pub.vendas[0].itens.length, 2); // item sem produto descartado
-  // privacidade: sem telefone/e-mail/documento em claro
-  const bruto = JSON.stringify(pub);
-  assert.ok(!bruto.includes("91999999999") && !bruto.includes("x@y.com") && !bruto.includes("12.345.678"));
+    ["codigo", "custo", "estoque_min", "id", "nome", "preco", "situacao"]); // sem campo interno _saldo
+  const porId = new Map(pub.produtos.map((p) => [p.id, p]));
+  const saldo = new Map(pub.saldos.map((s) => [s.produto_id, s.saldo]));
+
+  // zerados e negativos NAO podem sumir (era o risco do filtro padrao "positivo")
+  assert.ok(porId.has(1050) && saldo.get(1050) === 0, "produto zerado precisa estar na coleta");
+  assert.ok(porId.has(1003) && saldo.get(1003) === -2, "produto negativo precisa estar na coleta");
+  // variacoes entram (tipo V); pai e servico nao
+  assert.ok(porId.has(3001) && porId.has(3002), "variacoes precisam entrar");
+  assert.ok(!porId.has(3000), "produto pai nao pode entrar (estoque nao e proprio)");
+  assert.ok(!porId.has(4000), "servico nao pode entrar");
+  assert.equal(saldo.get(3001), 7);
+  assert.equal(saldo.get(3002), 0);
+  // custo vem da lista; sem duplicados
+  assert.equal(porId.get(1001).custo, 4);
+  assert.equal(new Set(pub.produtos.map((p) => p.id)).size, pub.produtos.length);
+  // as rotas descartadas nao sao mais chamadas
+  assert.ok(!st.rotas.includes("/estoques/saldos") && !st.rotas.includes("/contatos"));
+
+  // clientes vem dos pedidos; documento so como hash; sem telefone/e-mail
+  assert.equal(pub.clientes.length, 7);
   assert.match(pub.clientes[0].doc_hash, /^[0-9a-f]{16}$/);
-  // janela de vendas de 2 dias terminando hoje
+  assert.equal(pub.clientes[0].tipo, "J");
+  assert.ok(!JSON.stringify(pub).includes("12.345.678"), "documento nao pode aparecer em claro");
+  // vendas: data so AAAA-MM-DD, situacao guardada, item sem produto descartado
+  assert.equal(pub.vendas[0].data, hoje);
+  assert.equal(pub.vendas[0].situacao_id, 100);
+  assert.equal(pub.vendas[0].itens.length, 2);
   const ini = new Date(Date.parse(hoje + "T12:00:00Z") - 2 * 86400000).toISOString().slice(0, 10);
   assert.deepEqual(st.chamadasVendas[0], { ini, fim: hoje });
 
@@ -224,18 +247,35 @@ test("primeira execucao: coleta tudo, rotaciona token, publica e busca detalhes"
   }
 });
 
+test("consulta produtos com os 3 filtros de saldo e os 2 tipos", async () => {
+  await redis.set("bling:refresh_token", "R0");
+  await executar({ store, env, ...opcoes, detalhes: false });
+  const combos = new Set(st.consultasProdutos.map((c) => `${c.tipo}/${c.filtro}`));
+  assert.deepEqual([...combos].sort(), ["P/0", "P/1", "P/2", "V/0", "V/1", "V/2"]);
+});
+
+test("situacoes ignoradas (ex.: cancelado) nao entram e nem gastam chamada de detalhe", async () => {
+  await redis.set("bling:refresh_token", "R0");
+  const { corpo } = await executar({
+    store, env: { ...env, BLING_SITUACOES_IGNORAR: "200" }, ...opcoes, detalhes: false,
+  });
+  assert.equal(corpo.pedidos, 6);
+  assert.equal(corpo.clientes, 6);
+  assert.deepEqual(corpo.situacoes, { 100: 6, 200: 1 }); // a contagem ainda mostra o cancelado
+  assert.ok(!st.pedidoDetalhes.includes(9006));
+});
+
 test("segunda execucao no mesmo dia: sobrescreve com sha e usa detalhes em cache", async () => {
   await redis.set("bling:refresh_token", "R0");
   await executar({ store, env, ...opcoes });
   const r2 = await executar({ store, env, ...opcoes });
   assert.equal(r2.status, 200, JSON.stringify(r2.corpo));
   assert.equal(st.githubPuts, 2); // 2o PUT so passa com o sha correto
-  assert.equal(r2.corpo.detalhes_em_cache, N_PRODUTOS);
-  const pub = lerPublicado();
-  assert.equal(pub.produtos[0].estoque_min, 5);
-  assert.equal(pub.produtos[0].custo, 3.5);
-  // access token foi reaproveitado do cache: so houve 1 renovacao na 1a execucao
-  assert.equal(st.renovacoes, 1);
+  assert.equal(r2.corpo.detalhes_em_cache, IDS_VALIDOS);
+  const p = lerPublicado().produtos.find((x) => x.id === 1001);
+  assert.equal(p.estoque_min, 5);
+  assert.equal(p.custo, 4);
+  assert.equal(st.renovacoes, 1); // access token reaproveitado do cache
 });
 
 test("access token expirado (401) renova uma vez e continua", async () => {
@@ -272,19 +312,22 @@ test("detalhes retomam do cursor e dao a volta na lista", async () => {
   await redis.set("bling:detalhes_cursor", 1200);
   const { status } = await executar({ store, env, ...opcoes });
   assert.equal(status, 200);
-  assert.equal(st.detalhesPedidos[0], 1201); // comeca logo depois do cursor
-  assert.equal(st.detalhesPedidos[49], 1250); // 50 ids restam depois do cursor (1201..1250)...
-  assert.equal(st.detalhesPedidos[50], 1001); // ...e volta ao inicio
-  assert.equal(st.detalhesPedidos.length, N_PRODUTOS);
+  const d = st.detalhesPedidos;
+  assert.equal(d[0], 1201); // comeca logo depois do cursor
+  assert.equal(d[49], 1250); // 1201..1250
+  assert.equal(d[50], 3001); // depois as variacoes
+  assert.equal(d[51], 3002);
+  assert.equal(d[52], 1001); // ...e volta ao inicio
+  assert.equal(d.length, IDS_VALIDOS);
 });
 
 test("detalhes param quando o tempo acaba e o cursor guarda onde parou", async () => {
   let chamadas = 0;
   const b = {
     restante: () => (chamadas < 10 ? 100_000 : 0),
-    get: async (c) => {
+    get: async () => {
       chamadas++;
-      return { data: { estoque: { minimo: 1 }, precoCusto: 2 } };
+      return { data: { estoque: { minimo: 1 }, fornecedor: { precoCusto: 2 } } };
     },
   };
   const { feitos, ultimo } = await coletarDetalhes(b, [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22], store);
@@ -303,7 +346,7 @@ test("estouro de tempo antes de publicar: nada e publicado e o lock e liberado",
   assert.equal(await redis.get("bling:lock"), null);
 });
 
-test("historico: publica so vendas de uma janela antiga, sem tocar em produtos e saldos", async () => {
+test("historico: publica so vendas e clientes de uma janela antiga, sem tocar em produtos", async () => {
   await redis.set("bling:refresh_token", "R0");
   const ate = "2026-09-15";
   const { status, corpo } = await executarHistorico({ store, env, ate, dias: 7, ...opcoes });
@@ -311,21 +354,19 @@ test("historico: publica so vendas de uma janela antiga, sem tocar em produtos e
   assert.equal(corpo.arquivo, `dados/historico/vendas-${ate}.json.gz`);
   assert.equal(corpo.pedidos, 7);
   assert.deepEqual(st.chamadasVendas[0], { ini: "2026-09-08", fim: ate });
-  // nenhuma chamada a produtos, saldos ou contatos: o saldo de hoje nao pode ganhar data antiga
-  for (const r of ["/produtos", "/estoques/saldos", "/contatos"]) {
-    assert.ok(!st.rotas.some((x) => x.startsWith(r)), `nao deveria chamar ${r}`);
-  }
+  // nenhuma chamada a produtos: o saldo de hoje nao pode ganhar data antiga
+  assert.ok(!st.rotas.some((x) => x.startsWith("/produtos")), "historico nao deve consultar produtos");
   assert.equal(st.github.has(`dados/entrada/${hoje}.json.gz`), false); // nao dispara a rotina diaria
-  const f = st.github.get(`dados/historico/vendas-${ate}.json.gz`);
-  const pub = JSON.parse(gunzipSync(Buffer.from(f.content, "base64")).toString());
-  assert.deepEqual(Object.keys(pub).sort(), ["ate", "dias", "vendas"]);
+  const pub = publicado(`dados/historico/vendas-${ate}.json.gz`);
+  assert.deepEqual(Object.keys(pub).sort(), ["ate", "clientes", "dias", "vendas"]);
   assert.equal(pub.vendas.length, 7);
+  assert.equal(pub.clientes.length, 7);
   assert.equal(await redis.get("bling:lock"), null);
 
   if (process.env.TEST_OUT) {
     mkdirSync(`${process.env.TEST_OUT}/dados/historico`, { recursive: true });
     writeFileSync(`${process.env.TEST_OUT}/dados/historico/vendas-${ate}.json.gz`,
-      Buffer.from(f.content, "base64"));
+      Buffer.from(st.github.get(`dados/historico/vendas-${ate}.json.gz`).content, "base64"));
   }
 });
 

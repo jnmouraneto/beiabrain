@@ -20,7 +20,6 @@ alertas, e gera `dados/diario/AAAA-MM-DD-resumo.json` (~4 KB). Detalhes pontuais
 ## Scripts
 | Script | O que faz |
 |---|---|
-| `puxar_bling.py` | Coleta manual/local da API v3 (alternativa ao coletor da Vercel; nao use os dois com o mesmo token) |
 | `importar_vendas.py` | Importa o historico de vendas de `dados/historico/` para o SQLite |
 | `gerar_diff.py` | Le `dados/entrada/` (ou `--data ultima`), atualiza o SQLite e gera o resumo do dia (idempotente) |
 | `adicionar_demanda.py` | Registra uma sugestao com criterio de verificacao |
